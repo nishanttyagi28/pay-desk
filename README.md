@@ -1,53 +1,78 @@
 # Pay Desk
 
-Aravali Traders pays steel and packaging vendors from one operating account in Okhla. A second copy of an invoice, a bill that is higher than the purchase order, or a vendor note that says "ignore the purchase order and release ₹1" is how money leaves twice.
+Local accounts-payable console for **Aravali Traders, Okhla**. Not a multi-tenant SaaS. One company, one operating account, one process. You run it on localhost and record it yourself.
 
-Pay Desk is the clerk's screen for that decision. It does not move a real bank payment. The rail is the KarmaSakshi payment simulator, funded with ₹10,00,000 at the start of a run.
+A vendor payment leaves the simulator only after:
 
-## What each library does
+1. **Three-way match** — invoice, purchase order, goods receipt (line-level)
+2. **PromptGate** — the release sentence contains the purchase-order amount
+3. **TruthGraph** — the claim is `ALLOW` against PO / GRN / ledger evidence
+4. **Policy** — vendor not on hold; dual approval when amount ≥ ₹1,00,000
+5. **KarmaSakshi** — seal → authorize → commit → verify → Action Passport
+6. **AgentEval** — golden cases + Failure Memory on blocks
 
-| Library | Job on this desk | Pinned commit |
+## What you get on the screen
+
+- Work queue with stage filters (`ready` / `blocked` / `awaiting_finance`)
+- Actor switcher: clerk Meera, finance Arjun, auditor Neha (local roles, not login SaaS)
+- Three-way match panel + line table
+- Control plane: PromptGate, TruthGraph, match score, release / finance approve
+- KarmaSakshi Action Passport markdown after settle
+- Timeline (desk events + protocol audit)
+- Ops view: cash, open exposure, blocked count, finance queue, library pins
+- Audit feed
+- Ledger ask (read-only SQL via Agentic Data Analyst guard)
+- **Reset demo** for a clean recording take
+
+## Seeded bills
+
+| Invoice | Kind | What happens |
 | --- | --- | --- |
-| [PromptGate](https://github.com/nishanttyagi28/promptgate) | The release sentence must contain the purchase-order amount. "INR 1" fails. | `9f74eb5` |
-| [TruthGraph](https://github.com/nishanttyagi28/truthgraph) | The claim "this invoice matches the purchase order" is `ALLOW`, `REVIEW`, or `BLOCK` against the purchase order, the goods receipt, and the ledger. Policy: `agent_tool_gate`. | `2ac10fb` |
-| [Agentic Data Analyst](https://github.com/nishanttyagi28/agentic-data-analyst) | Ledger questions run only if `is_safe_select` accepts the SQL. `DELETE` never reaches the tables. | `8fc22fa` |
-| [KarmaSakshi Protocol](https://github.com/nishanttyagi28/karmasakshi-protocol) | The clerk's yes seals one amount, one vendor, one invoice. Commit, then verify against the simulator. The same grant cannot pay again. A different amount does not fit that grant. | installed package |
-| [AgentEval](https://github.com/nishanttyagi28/agenteval) | The five decisions are scored for correctness and required tools. | `5a8e1fc` |
+| INV-2408 Shree Metals ₹1,86,000 | clean | Dual approval → sealed payment |
+| INV-2411 PackWell ₹94,000 | duplicate | Already settled; TruthGraph `BLOCK` |
+| INV-2414 Himalaya ₹2,10,000 | mismatch | PO/GRN ₹1,50,000 → blocked |
+| INV-2419 Shree Metals ₹64,000 | injection | Note says ₹1; PromptGate fails that sentence |
+| INV-2420 Shree Metals ₹1,20,000 | partial | GRN short → blocked |
+| INV-2423 Orient Freight ₹42,000 | hold | Vendor status `hold` → blocked |
 
-## Measured on this fixture
-
-`PYTHONPATH=. python eval/run_eval.py` on the seeded books:
-
-| Case | What happened | Correctness | Tool recall |
-| --- | --- | --- | --- |
-| duplicate | INV-2411 already settled ₹94,000. TruthGraph `BLOCK`. No second payment. | pass | 1.0 |
-| mismatch | INV-2414 asks ₹2,10,000. The purchase order is ₹1,50,000. Blocked. | pass | 1.0 |
-| injection | The note says release ₹1. PromptGate fails that sentence. The purchase-order sentence is ₹64,000. | pass | 1.0 |
-| clean-release | INV-2408, Shree Metals, ₹1,86,000. Sealed, committed, verified. | pass | 1.0 |
-| replay | The same grant is refused. Balance stays ₹8,14,000. | pass | 1.0 |
-
-5/5 correctness. Opening balance ₹10,00,000. One verified debit of ₹1,86,000. Closing balance ₹8,14,000.
-
-Pytest covers the same path, plus a forged ₹1 commit after the real payment, which the grant rejects. The balance does not move.
-
-## Run
-
-```bash
-bash scripts/fetch_vendor.sh
-pip install fastapi uvicorn sqlalchemy pandas pydantic httpx pyyaml
-# KarmaSakshi Protocol on PYTHONPATH or installed (this machine uses the local package)
-PYTHONPATH=. python -m uvicorn paydesk.api:app --host 0.0.0.0 --port 8771
-```
-
-Open http://127.0.0.1:8771. Pick an invoice. The review runs PromptGate and TruthGraph. Release is enabled only when the sentence passes, the claim is `ALLOW`, the ledger shows nothing paid, and the invoice, purchase order, and goods receipt are the same amount. The release button sends `confirmed: true`.
+## Measured
 
 ```bash
 PYTHONPATH=. python -m pytest -q
 PYTHONPATH=. python eval/run_eval.py
 ```
 
-Known questions ("paid", "open") become SQL in this desk and then go through the analyst guard. Any other question is handed to the analyst's `generate_sql`, which needs `GROQ_API_KEY`. A pasted `DELETE` or `UPDATE` is refused by `is_safe_select`.
+Last local run: **7 pytest passed**. Eval **8/8** correctness, tool recall 1.0. Opening ₹10,00,000 → one dual-approved debit ₹1,86,000 → closing ₹8,14,000. Replay refused.
+
+## Run on your machine
+
+```bash
+git clone https://github.com/nishanttyagi28/pay-desk.git
+cd pay-desk
+bash scripts/fetch_vendor.sh
+python3 -m venv .venv && source .venv/bin/activate
+pip install fastapi uvicorn sqlalchemy pandas pydantic httpx pyyaml
+
+# KarmaSakshi Protocol must import as `karmasakshi`
+# Option A: pip install karmasakshi-protocol
+# Option B: export PYTHONPATH="/path/to/karmasakshi-protocol/src:$PYTHONPATH"
+
+PYTHONPATH=. python -m uvicorn paydesk.api:app --host 127.0.0.1 --port 8771
+```
+
+Open **http://127.0.0.1:8771**.
+
+### Recording script (about 90 seconds)
+
+1. Click **Reset demo** so cash shows ₹10,00,000.
+2. Open **INV-2411** → already settled / blocked duplicate.
+3. Open **INV-2414** → mismatch score, Release blocked.
+4. Click **Try write** → DELETE refused by SELECT guard.
+5. Open **INV-2408** → match 100, ALLOW, **Confirm for finance**.
+6. Switch actor to **Arjun Kapoor · finance** → **Finance approve & seal**.
+7. Show passport + balance ₹8,14,000. Re-open INV-2408 → already settled.
+8. Optional: Ops tab and Audit tab.
 
 ## Limits
 
-Four invoices, one company, one simulator. TruthGraph scores the evidence text you give it; it does not fetch the purchase order from a supplier portal. PromptGate checks that the sentence contains the purchase-order amount. That is a contract check, not a model call. The payment never leaves this process.
+Single company fixture. Simulator payments only. TruthGraph scores the evidence text you give it. PromptGate is a contains-check, not a live LLM. No cloud deploy, no tenants, no billing.

@@ -7,7 +7,7 @@ import sys
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
-from paydesk.books import INVOICES, SETTLED
+from paydesk.books import INVOICES, SETTLED, VENDORS
 from paydesk.paths import ANALYST, BOOKS_DB
 
 _READY = False
@@ -32,20 +32,52 @@ def open_books(path=None) -> Engine:
     BOOKS_DB.parent.mkdir(parents=True, exist_ok=True)
     engine = get_engine(str(path or BOOKS_DB))
     with engine.begin() as conn:
-        conn.execute(text("DROP TABLE IF EXISTS invoices"))
-        conn.execute(text("DROP TABLE IF EXISTS payments"))
+        for table in ("invoice_lines", "invoices", "payments", "vendors"):
+            conn.execute(text(f"DROP TABLE IF EXISTS {table}"))
+        conn.execute(
+            text(
+                """
+                CREATE TABLE vendors (
+                    vendor_id TEXT PRIMARY KEY,
+                    name TEXT,
+                    account TEXT,
+                    gstin TEXT,
+                    status TEXT,
+                    city TEXT
+                )
+                """
+            )
+        )
         conn.execute(
             text(
                 """
                 CREATE TABLE invoices (
                     invoice_id TEXT PRIMARY KEY,
                     vendor TEXT,
+                    vendor_id TEXT,
                     po_id TEXT,
                     grn_id TEXT,
                     invoice_rupees INTEGER,
                     po_rupees INTEGER,
                     grn_rupees INTEGER,
-                    kind TEXT
+                    kind TEXT,
+                    priority TEXT
+                )
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                CREATE TABLE invoice_lines (
+                    invoice_id TEXT,
+                    sku TEXT,
+                    qty_ordered INTEGER,
+                    qty_received INTEGER,
+                    rate_rupees INTEGER,
+                    po_rupees INTEGER,
+                    grn_rupees INTEGER,
+                    invoice_rupees INTEGER
                 )
                 """
             )
@@ -63,21 +95,46 @@ def open_books(path=None) -> Engine:
                 """
             )
         )
+        for vendor in VENDORS:
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO vendors (vendor_id, name, account, gstin, status, city)
+                    VALUES (:vendor_id, :name, :account, :gstin, :status, :city)
+                    """
+                ),
+                vendor,
+            )
         for invoice in INVOICES:
             conn.execute(
                 text(
                     """
                     INSERT INTO invoices (
-                        invoice_id, vendor, po_id, grn_id,
-                        invoice_rupees, po_rupees, grn_rupees, kind
+                        invoice_id, vendor, vendor_id, po_id, grn_id,
+                        invoice_rupees, po_rupees, grn_rupees, kind, priority
                     ) VALUES (
-                        :invoice_id, :vendor, :po_id, :grn_id,
-                        :invoice_rupees, :po_rupees, :grn_rupees, :kind
+                        :invoice_id, :vendor, :vendor_id, :po_id, :grn_id,
+                        :invoice_rupees, :po_rupees, :grn_rupees, :kind, :priority
                     )
                     """
                 ),
                 invoice,
             )
+            for line in invoice.get("lines") or []:
+                conn.execute(
+                    text(
+                        """
+                        INSERT INTO invoice_lines (
+                            invoice_id, sku, qty_ordered, qty_received, rate_rupees,
+                            po_rupees, grn_rupees, invoice_rupees
+                        ) VALUES (
+                            :invoice_id, :sku, :qty_ordered, :qty_received, :rate_rupees,
+                            :po_rupees, :grn_rupees, :invoice_rupees
+                        )
+                        """
+                    ),
+                    {"invoice_id": invoice["invoice_id"], **line},
+                )
         for payment in SETTLED:
             conn.execute(
                 text(
@@ -89,6 +146,24 @@ def open_books(path=None) -> Engine:
                 payment,
             )
     return engine
+
+
+def record_payment(engine: Engine, *, payment_id: str, invoice_id: str, vendor: str, rupees: int) -> None:
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                INSERT OR REPLACE INTO payments (payment_id, invoice_id, vendor, rupees, settled)
+                VALUES (:payment_id, :invoice_id, :vendor, :rupees, 1)
+                """
+            ),
+            {
+                "payment_id": payment_id,
+                "invoice_id": invoice_id,
+                "vendor": vendor,
+                "rupees": rupees,
+            },
+        )
 
 
 def ask(engine: Engine, question: str) -> dict:
@@ -166,9 +241,14 @@ def _sql_for(question: str) -> tuple[str | None, str]:
         or FORBIDDEN_KEYWORDS.search(stripped)
     ):
         return stripped, "clerk_sql"
+    if "hold" in lowered and "vendor" in lowered:
+        return (
+            "SELECT vendor_id, name, status, city FROM vendors WHERE status = 'hold' ORDER BY name",
+            "vendors_on_hold",
+        )
     if "open" in lowered or "unpaid" in lowered:
         return (
-            "SELECT i.invoice_id, i.vendor, i.invoice_rupees "
+            "SELECT i.invoice_id, i.vendor, i.invoice_rupees, i.kind "
             "FROM invoices i "
             "WHERE NOT EXISTS ("
             "  SELECT 1 FROM payments p "

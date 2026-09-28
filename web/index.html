@@ -8,42 +8,85 @@
 </head>
 <body>
   <header>
-    <div>
+    <div class="brand">
+      <p class="eyebrow">Aravali Traders · Okhla · local prototype</p>
       <h1>Pay Desk</h1>
-      <p>Aravali Traders, Okhla. A vendor payment leaves the account only after the books, the sentence, and a person agree.</p>
+      <p class="lede">A vendor payment leaves the account only after match, sentence, and the right people agree.</p>
     </div>
-    <div class="balance">
-      <span class="muted">Operating account</span>
-      <strong id="balance">—</strong>
+    <div class="header-meta">
+      <label class="actor">
+        Acting as
+        <select id="actor"></select>
+      </label>
+      <div class="balance">
+        <span>Operating cash</span>
+        <strong id="balance">—</strong>
+      </div>
+      <button class="ghost" id="reset" type="button">Reset demo</button>
     </div>
   </header>
-  <main>
-    <section class="queue">
-      <h2>Invoices</h2>
+
+  <nav class="tabs" aria-label="Views">
+    <button class="tab active" data-tab="work" type="button">Work queue</button>
+    <button class="tab" data-tab="ops" type="button">Ops</button>
+    <button class="tab" data-tab="audit" type="button">Audit</button>
+  </nav>
+
+  <section id="view-work" class="view active">
+    <aside class="queue pane">
+      <div class="pane-head">
+        <h2>Invoices</h2>
+        <div class="filters">
+          <button class="chip active" data-filter="all" type="button">All</button>
+          <button class="chip" data-filter="ready" type="button">Ready</button>
+          <button class="chip" data-filter="blocked" type="button">Blocked</button>
+          <button class="chip" data-filter="awaiting_finance" type="button">Finance</button>
+        </div>
+      </div>
       <div id="queue"></div>
-    </section>
-    <section class="dossier">
-      <h2>Selected bill</h2>
+    </aside>
+
+    <section class="dossier pane">
       <div id="dossier">
-        <p class="muted">Choose an invoice. The desk will read the purchase order, the goods receipt, and the vendor note before anyone can pay it.</p>
+        <p class="muted">Select an invoice. The desk runs three-way match, PromptGate, and TruthGraph before money can move.</p>
       </div>
-      <h2>Ask the ledger</h2>
-      <p class="muted">Questions run through the data analyst's read-only SQL guard.</p>
-      <button class="ghost" type="button" data-q="How much have we already paid each vendor?">Paid by vendor</button>
-      <button class="ghost" type="button" data-q="Which invoices are still open?">Open invoices</button>
-      <button class="ghost" type="button" data-q="DELETE FROM payments">Try a write</button>
-      <label for="question">Or type a question</label>
-      <textarea id="question" placeholder="Which invoices are still open?"></textarea>
-      <button class="ask" id="ask" type="button">Run question</button>
-      <div id="answer"></div>
+      <div class="ledger-box">
+        <h2>Ask the ledger</h2>
+        <div class="quick">
+          <button class="ghost" type="button" data-q="Which invoices are still open?">Open</button>
+          <button class="ghost" type="button" data-q="How much have we already paid each vendor?">Paid</button>
+          <button class="ghost" type="button" data-q="Which vendors are on hold?">Holds</button>
+          <button class="ghost" type="button" data-q="DELETE FROM payments">Try write</button>
+        </div>
+        <textarea id="question" placeholder="Which invoices are still open?"></textarea>
+        <button class="ask" id="ask" type="button">Run question</button>
+        <div id="answer"></div>
+      </div>
     </section>
-    <section class="gates">
-      <h2>Before money moves</h2>
+
+    <aside class="gates pane">
       <div id="gates">
-        <p class="muted">PromptGate checks the sentence. TruthGraph checks the claim. KarmaSakshi seals the exact rupee amount after you say yes.</p>
+        <h2>Control plane</h2>
+        <p class="muted">PromptGate · TruthGraph · Match · KarmaSakshi · AgentEval</p>
       </div>
-    </section>
-  </main>
+      <div id="timeline-panel">
+        <h2>Timeline</h2>
+        <div id="timeline" class="muted">No events yet.</div>
+      </div>
+    </aside>
+  </section>
+
+  <section id="view-ops" class="view">
+    <div class="ops-grid" id="ops"></div>
+  </section>
+
+  <section id="view-audit" class="view">
+    <div class="pane">
+      <h2>Desk + protocol audit</h2>
+      <div id="audit-feed"></div>
+    </div>
+  </section>
+
   <script src="/static/app.js"></script>
 </body>
 </html>

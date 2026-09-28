@@ -19,9 +19,19 @@ from karmasakshi.engine.core import KarmaSakshiEngine
 from karmasakshi.errors import GrantExhaustedError, KarmaSakshiError
 from karmasakshi.grants.model import ScopeConstraints
 from karmasakshi.passports.generator import build_passport
+from karmasakshi.passports.render import render_passport_markdown
 from karmasakshi.stores.memory import InMemoryGrantStore
 
-from paydesk.books import AGENT_ID, AGENT_NAME, CLERK_ID, CLERK_NAME, OPENING_RUPEES, OPERATING_ACCOUNT
+from paydesk.books import (
+    AGENT_ID,
+    AGENT_NAME,
+    CLERK_ID,
+    CLERK_NAME,
+    FINANCE_ID,
+    FINANCE_NAME,
+    OPENING_RUPEES,
+    OPERATING_ACCOUNT,
+)
 
 
 class PaymentRail:
@@ -43,15 +53,19 @@ class PaymentRail:
         self.clerk = Principal(
             principal_id=CLERK_ID, principal_type=PrincipalType.HUMAN, display_name=CLERK_NAME
         )
+        self.finance = Principal(
+            principal_id=FINANCE_ID, principal_type=PrincipalType.HUMAN, display_name=FINANCE_NAME
+        )
         self.agent = Principal(
             principal_id=AGENT_ID, principal_type=PrincipalType.AGENT, display_name=AGENT_NAME
         )
         self._held: dict[str, tuple] = {}
+        self._passports: dict[str, dict] = {}
 
     def balance_rupees(self) -> int:
         return self.simulator.get_balance(OPERATING_ACCOUNT) // 100
 
-    def release(self, invoice: dict) -> dict:
+    def release(self, invoice: dict, *, approver: str = CLERK_ID) -> dict:
         """Prepare, seal, authorize, commit, and verify one exact amount."""
         held = self._held.get(invoice["invoice_id"])
         if held is not None:
@@ -73,6 +87,7 @@ class PaymentRail:
                 "tools": ["karmasakshi.commit"],
             }
 
+        issuer = self.finance if approver == FINANCE_ID else self.clerk
         request = self._request(invoice, invoice["po_rupees"])
         tools = [
             "karmasakshi.prepare",
@@ -87,7 +102,7 @@ class PaymentRail:
         now = datetime.now(timezone.utc)
         grant = self.engine.authorize(
             sealed,
-            issuer=self.clerk,
+            issuer=issuer,
             subject=self.agent,
             audience=(self.adapter.adapter_id,),
             allowed_effect_types=(manifest.effect_type,),
@@ -111,20 +126,32 @@ class PaymentRail:
             commit_result=commit,
             outcome_proof=proof,
         )
-        self._held[invoice["invoice_id"]] = (sealed, grant)
-        return {
-            "ok": bool(commit.success and proof.matched_expected and passport.verification.seal_verified),
+        markdown = render_passport_markdown(passport)
+        payload = {
+            "ok": bool(
+                commit.success and proof.matched_expected and passport.verification.seal_verified
+            ),
             "invoice_id": invoice["invoice_id"],
             "rupees": invoice["po_rupees"],
             "beneficiary": invoice["vendor_account"],
+            "manifest_id": manifest.manifest_id,
             "manifest_hash": manifest.canonical_hash(),
             "grant_id": grant.grant_id,
+            "authorized_by": issuer.principal_id,
             "seal_verified": passport.verification.seal_verified,
             "grant_verified": passport.verification.grant_verified,
             "matched_expected": proof.matched_expected,
+            "lifecycle_state": passport.lifecycle_state,
+            "passport_markdown": markdown,
             "balance_rupees": self.balance_rupees(),
             "tools": tools,
         }
+        self._held[invoice["invoice_id"]] = (sealed, grant)
+        self._passports[invoice["invoice_id"]] = payload
+        return payload
+
+    def passport(self, invoice_id: str) -> dict | None:
+        return self._passports.get(invoice_id)
 
     def forge(self, invoice: dict, rupees: int) -> dict:
         """Try to commit a different amount with the grant that sealed the real one."""
@@ -145,6 +172,25 @@ class PaymentRail:
                 "balance_rupees": self.balance_rupees(),
             }
         return {"ok": True, "error": "forge_was_accepted", "balance_rupees": self.balance_rupees()}
+
+    def protocol_events(self, invoice_id: str | None = None) -> list[dict]:
+        events = []
+        for event in self.audit.all_events():
+            row = {
+                "event_type": event.event_type,
+                "decision": event.decision,
+                "manifest_id": event.manifest_id,
+                "grant_id": event.grant_id,
+                "actor_id": event.actor_id,
+                "at": event.timestamp.isoformat() if event.timestamp else None,
+            }
+            if invoice_id is None:
+                events.append(row)
+                continue
+            held = self._held.get(invoice_id)
+            if held and held[0].manifest.manifest_id == event.manifest_id:
+                events.append(row)
+        return list(reversed(events))
 
     def _request(self, invoice: dict, rupees: int, idem: str | None = None) -> PaymentRequest:
         return PaymentRequest(
