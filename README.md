@@ -11,6 +11,15 @@ A vendor payment leaves the simulator only after:
 5. **KarmaSakshi** — seal → authorize → commit → verify → Action Passport
 6. **AgentEval** — golden cases + Failure Memory on blocks
 
+## Demo video (LinkedIn)
+
+Recording of the local console (~50s, with voiceover):
+
+- [`docs/demo/paydesk_linkedin_demo.mp4`](docs/demo/paydesk_linkedin_demo.mp4)
+- Caption draft: [`docs/demo/LINKEDIN_POST.md`](docs/demo/LINKEDIN_POST.md)
+
+Open the mp4, sound on. Flow: open invoices → DELETE refused → mismatch blocked → dual approval → sealed once.
+
 ## What you get on the screen
 
 - Work queue with stage filters (`ready` / `blocked` / `awaiting_finance`)
